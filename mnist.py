@@ -1,4 +1,5 @@
 import numpy as np
+import math
 from keras.datasets import mnist
 
 class Layer:
@@ -7,55 +8,149 @@ class Layer:
     def __init__(self, input_size):
         self.input_size = input_size
 
-
 class ConvLayer(Layer):
     weights = None
-    input_size = None
+    # input_size = None
     stride = None
     padding = None
-    output = None
+    layer_output = None
     output_size = None
+    layer_input = None
 
     def __init__(self, input_size, filter_size, num_filters, stride, padding):
-        self.input_size = input_size
+        # self.input_size = input_size
         self.stride = stride
         self.padding = padding
 
         c, h, w = input_size
         f = filter_size
-        self.weights = np.random.default_rng().uniform(low=-0.1, high=0.1, size=(num_filters, f, f, c))
-        self.output_size = int((w - f + padding * 2) / stride + 1)
 
-    # Tensor is size (c, h, w)
-    def forwardPass(self, tensor):
-        num_filters = self.weights.shape[0]
-        self.output = np.empty((self.output_size, self.output_size, num_filters))
-        f = self.weights.shape[1]
-        for i in range(self.output_size):
-            for j in range(self.output_size):
-                for w in range(num_filters):
-                    input_window = tensor[i:i+f, j:j+f, :]
-                    assert(input_window.shape == self.weights[w].shape)
-                    mult = np.multiply(input_window, self.weights[w])
-                    self.output[i][j][w] = np.maximum(0, np.sum(mult))
+        limit = 1 / math.sqrt(100)
+
+        self.weights = np.random.uniform(low=-limit, high=limit, size=(f, f, c, num_filters))
+        output_h = int((h - f + padding * 2) / stride + 1)
+        output_w = int((w - f + padding * 2) / stride + 1)
+        self.output_size = (output_h, output_w, num_filters)
+
+    def crossCorrelate(self, tensor, kernels, stride=1, padding=0, full=False):
+        n, h, w, c = tensor.shape
+        f = kernels.shape[0]
+        num_filters = kernels.shape[3]
+
+        if full:
+            stride = 1
+            padding = int(f / 2)
+
+        output_h = int((h - f + padding * 2) / stride + 1)
+        output_w = int((w - f + padding * 2) / stride + 1)
+
+        tensor = np.pad(tensor, ((0,0), (padding, padding), (padding, padding), (0, 0)))
+
+        output = np.empty((n, output_h, output_w, num_filters))
+        for i in range(0, output_h, stride):
+            for j in range(0, output_w, stride):
+                window = tensor[:, i:i+f, j:j+f, :, np.newaxis]
+                product = window * kernels[np.newaxis, :, :, :, :]
+                sum_of_prod = np.sum(product, axis=(1, 2, 3))
+                output[:, i, j, :] = sum_of_prod
+        return output
+
+    def conv2d(self, tensor, kernels, stride=1, padding=0, full=False):
+        kernels = np.rot90(kernels, axes=(1,2))
+        kernels = np.rot90(kernels, axes=(1,2))
+        return self.crossCorrelate(tensor, kernels, stride, padding, full)
+
+    # Tensor is size (n, c, h, w)
+    def calculateOutput(self, tensor, training):
+        if training:
+            self.layer_input = tensor
+
+        output = self.crossCorrelate(tensor, self.weights, self.stride, self.padding)
+        self.layer_output = np.maximum(0, output)
+        return self.layer_output
+
+    def calculateWeightGradients(self, dL_dY):
+        dY_dW_size = np.append(self.layer_input.shape[0], self.weights.shape)
+        dY_dW = np.zeros(dY_dW_size)
+        dL_dY = np.squeeze(dL_dY, axis=0)
+
+        for c in range(dL_dY.shape[2]):
+            for d in range(self.layer_input.shape[3]):
+                input_tensor = self.layer_input[:, :, :, d, np.newaxis]
+                kernel = dL_dY[:, :, c, np.newaxis, np.newaxis]
+                dY_dW[:, :, :, d, c, np.newaxis] = self.crossCorrelate(input_tensor, kernel)
+
+        return dY_dW
+
+    def calculateInputGradients(self, dL_dY):
+        weights = np.swapaxes(self.weights, 2, 3)
+
+        _, input_h, input_w, _ = self.layer_input.shape
+        _, gradient_h, gradient_w, _ = dL_dY.shape
+
+        # Assuming symmetric images/filters for now
+        padding = 0
+        filter_size = weights.shape[0]
+        if gradient_w < input_w:
+            padding = int((input_w - 1 - gradient_w + filter_size) / 2)
+
+        return self.conv2d(dL_dY, weights, padding=padding)
+
+    def updateWeights(self, dL_dY, learning_rate):
+        output_h, output_w, num_filters = self.output_size
+
+        if dL_dY.ndim == 1:
+            dL_dY = dL_dY.reshape(1, output_h, output_w, num_filters)
+
+        dY_dW = self.calculateWeightGradients(dL_dY)
+
+        dY_dW = np.mean(dY_dW, axis=0)
+        self.weights -= learning_rate * dY_dW
+
+        dL_dX = self.calculateInputGradients(dL_dY)
+        return dL_dX
 
 class FCLayer(Layer):
     weights = None
     num_nodes = None
+    # I don't think I need to save the output?
     output = None
+    layer_input = None
 
     def __init__(self, input_size, num_nodes):
         self.num_nodes = num_nodes
 
         c, h, w = input_size
-        self.weights = np.random.default_rng().uniform(low=-0.1, high=0.1, size=(c * h * w, num_nodes))
+        limit = 1 / math.sqrt(60000)
+        self.weights = np.random.uniform(low=-limit, high=limit, size=(c * h * w, num_nodes))
 
-    # Tensor is size (c, h, w)
-    def forwardPass(self, tensor):
-        flattened = tensor.flatten()
-        product = np.dot(flattened, self.weights)
+    # Tensor is size (n, c, h, w)
+    def calculateOutput(self, tensor, training):
+        flattened = tensor.reshape(tensor.shape[0], -1)
+
+        if training:
+            self.layer_input = flattened
+
+        product = np.dot(flattened, self.weights[:, :])
         exp = np.exp(product)
-        self.output = exp / np.sum(exp)
+        return exp / np.sum(exp)
+
+    def calculateWeightGradients(self):
+        return self.layer_input
+
+    def updateWeights(self, dL_dY, learning_rate):
+        dY_dW = self.calculateWeightGradients()
+        dL_dW = np.matmul(dY_dW[:, :, np.newaxis], dL_dY[:, np.newaxis, :])
+        dL_dW = np.mean(dL_dW, axis=0)
+
+        dY_dX = self.weights
+        dL_dY = np.mean(dL_dY, axis=0)
+        dL_dX = dL_dY * dY_dX
+        dL_dX = np.sum(dL_dX, axis=1)
+
+        self.weights -= learning_rate * dL_dW
+
+        return dL_dX
 
 
 class MnistCNN:
@@ -64,20 +159,52 @@ class MnistCNN:
     def addConvLayer(self, input_size, filter_size, num_filters, stride, padding):
         layer = ConvLayer(input_size, filter_size, num_filters, stride, padding)
         self.layers.append(layer)
-        return (num_filters, layer.output_size, layer.output_size)
+
+        output_h, output_w, _ = layer.output_size
+        return (num_filters, output_h, output_w)
 
     def addFCLayer(self, input_size, num_nodes):
         self.layers.append(FCLayer(input_size, num_nodes))
 
+    def forwardPass(self, batch):
+        layer_input = batch[:, :, :, np.newaxis]
+        for layer in self.layers:
+            output = layer.calculateOutput(layer_input, True)
+            layer_input = output
+        return output
+
+    def calculateLossGradient(self, scores, labels):
+        examples = labels.shape[0]
+        grad = scores
+        for idx, label in enumerate(labels):
+            grad[idx, label] -= 1
+        return grad
+
+    def backwardPass(self, scores, labels, learning_rate):
+        upstream_gradients = self.calculateLossGradient(scores, labels)
+        for layer in reversed(self.layers):
+            upstream_gradients = layer.updateWeights(upstream_gradients, learning_rate)
+
+    def calculateLoss(self, scores, labels):
+        examples = labels.shape[0]
+        log_likelihood = -np.log(scores[range(examples), labels])
+        loss = np.sum(log_likelihood) / examples
+        return loss
+
     def train(self, train_x, train_y, batch_size, epochs, learning_rate):
         for epoch in range(epochs):
-            print("Epoch ", epoch)
-            for example in train_x:
-                layer_input = np.expand_dims(example, axis=2)
-                for layer in self.layers:
-                    layer.forwardPass(layer_input)
-                    layer_input = layer.output
+            print("Epoch", epoch)
 
+            # Forward Pass
+            for x in range(0, train_x.shape[0], batch_size):
+                scores = self.forwardPass(train_x[x : x + batch_size])
+                labels = train_y[x : x + batch_size]
+                loss = self.calculateLoss(scores, labels)
+                print("    Batch", int(x / batch_size), " |  Loss:", loss)
+                self.backwardPass(scores, labels, learning_rate)
+
+            print(scores)
+                
 
 if __name__ == '__main__':
     print("Loading dataset...")
@@ -88,9 +215,9 @@ if __name__ == '__main__':
     num_classes = 10
 
     cnn = MnistCNN()
-    c, h, w = cnn.addConvLayer((c, h, w), 3, 10, 1, 0)
-    c, h, w = cnn.addConvLayer((c, h, w), 3, 10, 1, 0)
-    c, h, w = cnn.addConvLayer((c, h, w), 3, 10, 1, 0)
+    c, h, w = cnn.addConvLayer((c, h, w), filter_size=3, num_filters=4, stride=1, padding=0)
+    c, h, w = cnn.addConvLayer((c, h, w), filter_size=3, num_filters=5, stride=1, padding=0)
+    c, h, w = cnn.addConvLayer((c, h, w), filter_size=3, num_filters=6, stride=1, padding=0)
     cnn.addFCLayer((c, h, w), num_classes)
 
-    cnn.train(train_x, train_y, 10, 1, 1e-5)
+    cnn.train(train_x, train_y, batch_size=100, epochs=1, learning_rate=1e-5)
