@@ -235,17 +235,19 @@ class MnistCNN:
     def visualize(self, examples_x, examples_y, num_examples):
         start_index = randrange(examples_y.shape[0] - num_examples)
         input_x = examples_x[start_index:start_index + num_examples]
-        input_y = examples_y[start_index:start_index + num_examples]
+        labels = examples_y[start_index:start_index + num_examples]
         scores = self.forwardPass(input_x)
 
         fig = plt.figure(figsize=(10, 7))
+        fig.canvas.manager.set_window_title("Test Examples")
         rows = 2
         columns = int(num_examples / rows)
         for idx, score in enumerate(scores):
             fig.add_subplot(rows, columns, idx + 1)
-            title = "Guess: %d" % np.argmax(score)
+            title = "Guess: %d, Actual: %d" % (np.argmax(score), labels[idx])
             plt.title(title)
-            plt.imshow(input_x[idx])
+            plt.axis('off')
+            plt.imshow(input_x[idx], cmap='gray')
         plt.show()
 
 if __name__ == '__main__':
