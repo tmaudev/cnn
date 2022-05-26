@@ -132,21 +132,22 @@ class FCLayer(Layer):
             self.layer_input = flattened
 
         product = np.dot(flattened, self.weights[:, :])
-        exp = np.exp(product)
-        return exp / np.sum(exp)
+        max_val = np.max(product, axis=1)
+        exp = np.exp(product - max_val[:, np.newaxis])
+        return exp / np.sum(exp, axis=1)[:, np.newaxis]
 
     def calculateWeightGradients(self):
         return self.layer_input
 
     def updateWeights(self, dL_dY, learning_rate):
-        dY_dW = self.calculateWeightGradients()
-        dL_dW = np.matmul(dY_dW[:, :, np.newaxis], dL_dY[:, np.newaxis, :])
-        dL_dW = np.mean(dL_dW, axis=0)
-
         dY_dX = self.weights
-        dL_dY = np.mean(dL_dY, axis=0)
-        dL_dX = dL_dY * dY_dX
+        dL_dY_mean = np.mean(dL_dY, axis=0)
+        dL_dX = dL_dY_mean * dY_dX
         dL_dX = np.sum(dL_dX, axis=1)
+
+        dY_dW = self.calculateWeightGradients()
+        dL_dW = np.einsum('bn,bc->bnc', dY_dW, dL_dY)
+        dL_dW = np.sum(dL_dW, axis=0)
 
         self.weights -= learning_rate * dL_dW
 
@@ -187,37 +188,56 @@ class MnistCNN:
 
     def calculateLoss(self, scores, labels):
         examples = labels.shape[0]
+        scores += 1e-15
         log_likelihood = -np.log(scores[range(examples), labels])
         loss = np.sum(log_likelihood) / examples
         return loss
 
+    def calculateCorrectExamples(self, scores, labels):
+        correct = 0
+        for idx, label in enumerate(labels):
+            if np.argmax(scores[idx]) == label:
+                correct += 1
+        return correct
+
     def train(self, train_x, train_y, batch_size, epochs, learning_rate):
+        print("Training...")
         for epoch in range(epochs):
-            print("Epoch", epoch)
+            total_loss = 0
+            total_correct = 0
 
             # Forward Pass
-            for x in range(0, train_x.shape[0], batch_size):
+            for x in range(0, train_x.shape[0] - batch_size, batch_size):
                 scores = self.forwardPass(train_x[x : x + batch_size])
+
                 labels = train_y[x : x + batch_size]
                 loss = self.calculateLoss(scores, labels)
-                print("    Batch", int(x / batch_size), " |  Loss:", loss)
+                total_loss += loss
+
+                total_correct += self.calculateCorrectExamples(scores, labels)
+                # print("Batch: %03d  |  Loss: %.2f" % (int(x / batch_size), loss))
                 self.backwardPass(scores, labels, learning_rate)
 
-            print(scores)
-                
+            accuracy = 100 * total_correct / train_y.shape[0]
+            print("Epoch: %d  |  Total Loss: %.3f  |  Accuracy: %.3f%%" % (epoch, total_loss, accuracy))
 
 if __name__ == '__main__':
+    np.set_printoptions(precision=3, suppress=True)
+
     print("Loading dataset...")
     (train_x, train_y), (test_x, test_y) = mnist.load_data()
+    # train_x = train_x[:100, :, :]
+    # train_y = train_y[:100]
+    # print(train_y)
 
     num_examples, h, w = train_x.shape
     c = 1
     num_classes = 10
 
     cnn = MnistCNN()
-    c, h, w = cnn.addConvLayer((c, h, w), filter_size=3, num_filters=4, stride=1, padding=0)
-    c, h, w = cnn.addConvLayer((c, h, w), filter_size=3, num_filters=5, stride=1, padding=0)
+    # c, h, w = cnn.addConvLayer((c, h, w), filter_size=3, num_filters=4, stride=1, padding=0)
+    # c, h, w = cnn.addConvLayer((c, h, w), filter_size=3, num_filters=5, stride=1, padding=0)
     c, h, w = cnn.addConvLayer((c, h, w), filter_size=3, num_filters=6, stride=1, padding=0)
     cnn.addFCLayer((c, h, w), num_classes)
 
-    cnn.train(train_x, train_y, batch_size=100, epochs=1, learning_rate=1e-5)
+    cnn.train(train_x, train_y, batch_size=1000, epochs=10, learning_rate=1e-5)
