@@ -1,5 +1,7 @@
 import numpy as np
 import math
+import matplotlib.pyplot as plt
+from random import randrange
 from keras.datasets import mnist
 
 class Layer:
@@ -70,17 +72,17 @@ class ConvLayer(Layer):
         return self.layer_output
 
     def calculateWeightGradients(self, dL_dY):
-        dY_dW_size = np.append(self.layer_input.shape[0], self.weights.shape)
-        dY_dW = np.zeros(dY_dW_size)
+        dL_dW_size = np.append(self.layer_input.shape[0], self.weights.shape)
+        dL_dW = np.zeros(dL_dW_size)
         dL_dY = np.squeeze(dL_dY, axis=0)
 
         for c in range(dL_dY.shape[2]):
             for d in range(self.layer_input.shape[3]):
                 input_tensor = self.layer_input[:, :, :, d, np.newaxis]
                 kernel = dL_dY[:, :, c, np.newaxis, np.newaxis]
-                dY_dW[:, :, :, d, c, np.newaxis] = self.crossCorrelate(input_tensor, kernel)
+                dL_dW[:, :, :, d, c, np.newaxis] = self.crossCorrelate(input_tensor, kernel)
 
-        return dY_dW
+        return dL_dW
 
     def calculateInputGradients(self, dL_dY):
         weights = np.swapaxes(self.weights, 2, 3)
@@ -102,10 +104,16 @@ class ConvLayer(Layer):
         if dL_dY.ndim == 1:
             dL_dY = dL_dY.reshape(1, output_h, output_w, num_filters)
 
-        dY_dW = self.calculateWeightGradients(dL_dY)
+        dL_dY = np.repeat(dL_dY, self.layer_output.shape[0], axis=0)
+        # print("Before:", dL_dY[0])
+        dL_dY[np.where(self.layer_output <= 0)] = 0
+        # print("After:", dL_dY[0])
+        dL_dY = np.mean(dL_dY, axis=0)[np.newaxis, :]
 
-        dY_dW = np.mean(dY_dW, axis=0)
-        self.weights -= learning_rate * dY_dW
+        dL_dW = self.calculateWeightGradients(dL_dY)
+
+        dL_dW = np.mean(dL_dW, axis=0)
+        self.weights -= learning_rate * dL_dW
 
         dL_dX = self.calculateInputGradients(dL_dY)
         return dL_dX
@@ -200,8 +208,18 @@ class MnistCNN:
                 correct += 1
         return correct
 
-    def train(self, train_x, train_y, batch_size, epochs, learning_rate):
+    def calculateLossAndAccuracy(self, input, labels):
+        scores = self.forwardPass(input)
+        loss = self.calculateLoss(scores, labels)
+        accuracy = 100 * self.calculateCorrectExamples(scores, labels) / labels.shape[0]
+
+        return (loss, accuracy)
+
+    def train(self, train_x, train_y, test_x, test_y, batch_size, epochs, learning_rate):
+        test_loss, test_accuracy = self.calculateLossAndAccuracy(test_x, test_y)
+        print("Initial Test Loss: %.3f  |  Initial Test Accuracy: %.3f%%" % (test_loss, test_accuracy))
         print("Training...")
+
         for epoch in range(epochs):
             total_loss = 0
             total_correct = 0
@@ -219,7 +237,23 @@ class MnistCNN:
                 self.backwardPass(scores, labels, learning_rate)
 
             accuracy = 100 * total_correct / train_y.shape[0]
-            print("Epoch: %d  |  Total Loss: %.3f  |  Accuracy: %.3f%%" % (epoch, total_loss, accuracy))
+
+            test_loss, test_accuracy = self.calculateLossAndAccuracy(test_x, test_y)
+
+            print("Epoch:", epoch)
+            print("   Train Loss: %.3f  |  Train Accuracy: %.3f%%" % (total_loss, accuracy), end='')
+            print("  |  Test Loss:  %.3f  |  Test Accuracy:  %.3f%%" % (test_loss, test_accuracy))
+
+    def visualize(self, examples_x, examples_y, num_examples):
+        start_index = randrange(examples_y.shape[0] - num_examples)
+        input_x = examples_x[start_index:start_index + num_examples]
+        input_y = examples_y[start_index:start_index + num_examples]
+        scores = self.forwardPass(input_x)
+        for idx, score in enumerate(scores):
+            title = "Guess: %d" % np.argmax(score)
+            plt.title(title)
+            plt.imshow(input_x[idx])
+            plt.show()
 
 if __name__ == '__main__':
     np.set_printoptions(precision=3, suppress=True)
@@ -228,16 +262,16 @@ if __name__ == '__main__':
     (train_x, train_y), (test_x, test_y) = mnist.load_data()
     # train_x = train_x[:100, :, :]
     # train_y = train_y[:100]
-    # print(train_y)
 
     num_examples, h, w = train_x.shape
     c = 1
     num_classes = 10
 
     cnn = MnistCNN()
-    # c, h, w = cnn.addConvLayer((c, h, w), filter_size=3, num_filters=4, stride=1, padding=0)
     # c, h, w = cnn.addConvLayer((c, h, w), filter_size=3, num_filters=5, stride=1, padding=0)
     c, h, w = cnn.addConvLayer((c, h, w), filter_size=3, num_filters=6, stride=1, padding=0)
     cnn.addFCLayer((c, h, w), num_classes)
 
-    cnn.train(train_x, train_y, batch_size=1000, epochs=10, learning_rate=1e-5)
+    cnn.train(train_x, train_y, test_x, test_y, batch_size=1000, epochs=10, learning_rate=1e-5)
+
+    cnn.visualize(test_x, test_y, 4)
