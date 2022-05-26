@@ -12,15 +12,11 @@ class Layer:
 
 class ConvLayer(Layer):
     weights = None
-    # input_size = None
-    stride = None
-    padding = None
-    layer_output = None
     output_size = None
+    layer_output = None
     layer_input = None
 
     def __init__(self, input_size, filter_size, num_filters, stride, padding):
-        # self.input_size = input_size
         self.stride = stride
         self.padding = padding
 
@@ -105,9 +101,7 @@ class ConvLayer(Layer):
             dL_dY = dL_dY.reshape(1, output_h, output_w, num_filters)
 
         dL_dY = np.repeat(dL_dY, self.layer_output.shape[0], axis=0)
-        # print("Before:", dL_dY[0])
         dL_dY[np.where(self.layer_output <= 0)] = 0
-        # print("After:", dL_dY[0])
         dL_dY = np.mean(dL_dY, axis=0)[np.newaxis, :]
 
         dL_dW = self.calculateWeightGradients(dL_dY)
@@ -120,14 +114,9 @@ class ConvLayer(Layer):
 
 class FCLayer(Layer):
     weights = None
-    num_nodes = None
-    # I don't think I need to save the output?
-    output = None
     layer_input = None
 
     def __init__(self, input_size, num_nodes):
-        self.num_nodes = num_nodes
-
         c, h, w = input_size
         limit = 1 / math.sqrt(60000)
         self.weights = np.random.uniform(low=-limit, high=limit, size=(c * h * w, num_nodes))
@@ -217,14 +206,13 @@ class MnistCNN:
 
     def train(self, train_x, train_y, test_x, test_y, batch_size, epochs, learning_rate):
         test_loss, test_accuracy = self.calculateLossAndAccuracy(test_x, test_y)
-        print("Initial Test Loss: %.3f  |  Initial Test Accuracy: %.3f%%" % (test_loss, test_accuracy))
+        print("Initial Test Loss: %.3f  |  Initial Test Accuracy: %.3f%%\n" % (test_loss, test_accuracy))
         print("Training...")
 
         for epoch in range(epochs):
             total_loss = 0
             total_correct = 0
 
-            # Forward Pass
             for x in range(0, train_x.shape[0] - batch_size, batch_size):
                 scores = self.forwardPass(train_x[x : x + batch_size])
 
@@ -258,10 +246,10 @@ class MnistCNN:
 if __name__ == '__main__':
     np.set_printoptions(precision=3, suppress=True)
 
-    print("Loading dataset...")
+    print("Loading MNIST Dataset...")
     (train_x, train_y), (test_x, test_y) = mnist.load_data()
-    # train_x = train_x[:100, :, :]
-    # train_y = train_y[:100]
+    train_x = train_x[:100, :, :]
+    train_y = train_y[:100]
 
     num_examples, h, w = train_x.shape
     c = 1
@@ -272,6 +260,6 @@ if __name__ == '__main__':
     c, h, w = cnn.addConvLayer((c, h, w), filter_size=3, num_filters=6, stride=1, padding=0)
     cnn.addFCLayer((c, h, w), num_classes)
 
-    cnn.train(train_x, train_y, test_x, test_y, batch_size=1000, epochs=10, learning_rate=1e-5)
+    cnn.train(train_x, train_y, test_x, test_y, batch_size=10, epochs=10, learning_rate=1e-5)
 
     cnn.visualize(test_x, test_y, 4)
