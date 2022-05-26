@@ -228,7 +228,7 @@ class MnistCNN:
 
             test_loss, test_accuracy = self.calculateLossAndAccuracy(test_x, test_y)
 
-            print("Epoch:", epoch)
+            print("Epoch:", epoch + 1)
             print("   Train Loss: %.3f  |  Train Accuracy: %.3f%%" % (total_loss, accuracy), end='')
             print("  |  Test Loss:  %.3f  |  Test Accuracy:  %.3f%%" % (test_loss, test_accuracy))
 
@@ -237,19 +237,24 @@ class MnistCNN:
         input_x = examples_x[start_index:start_index + num_examples]
         input_y = examples_y[start_index:start_index + num_examples]
         scores = self.forwardPass(input_x)
+
+        fig = plt.figure(figsize=(10, 7))
+        rows = 2
+        columns = int(num_examples / rows)
         for idx, score in enumerate(scores):
+            fig.add_subplot(rows, columns, idx + 1)
             title = "Guess: %d" % np.argmax(score)
             plt.title(title)
             plt.imshow(input_x[idx])
-            plt.show()
+        plt.show()
 
 if __name__ == '__main__':
     np.set_printoptions(precision=3, suppress=True)
 
     print("Loading MNIST Dataset...")
     (train_x, train_y), (test_x, test_y) = mnist.load_data()
-    train_x = train_x[:100, :, :]
-    train_y = train_y[:100]
+    # train_x = train_x[:100, :, :]
+    # train_y = train_y[:100]
 
     num_examples, h, w = train_x.shape
     c = 1
@@ -260,6 +265,6 @@ if __name__ == '__main__':
     c, h, w = cnn.addConvLayer((c, h, w), filter_size=3, num_filters=6, stride=1, padding=0)
     cnn.addFCLayer((c, h, w), num_classes)
 
-    cnn.train(train_x, train_y, test_x, test_y, batch_size=10, epochs=10, learning_rate=1e-5)
+    cnn.train(train_x, train_y, test_x, test_y, batch_size=1000, epochs=10, learning_rate=1e-5)
 
-    cnn.visualize(test_x, test_y, 4)
+    cnn.visualize(test_x, test_y, 8)
