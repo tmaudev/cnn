@@ -12,6 +12,7 @@ class Layer:
 
 class ConvLayer(Layer):
     weights = None
+    biases = None
     output_size = None
     layer_output = None
     layer_input = None
@@ -29,6 +30,8 @@ class ConvLayer(Layer):
         output_h = int((h - f + padding * 2) / stride + 1)
         output_w = int((w - f + padding * 2) / stride + 1)
         self.output_size = (output_h, output_w, num_filters)
+
+        self.biases = np.zeros(self.output_size)
 
     def crossCorrelate(self, tensor, kernels, stride=1, padding=0, full=False):
         n, h, w, c = tensor.shape
@@ -64,6 +67,7 @@ class ConvLayer(Layer):
             self.layer_input = tensor
 
         output = self.crossCorrelate(tensor, self.weights, self.stride, self.padding)
+        output += self.biases
         self.layer_output = np.maximum(0, output)
         return self.layer_output
 
@@ -79,6 +83,9 @@ class ConvLayer(Layer):
                 dL_dW[:, :, :, d, c, np.newaxis] = self.crossCorrelate(input_tensor, kernel)
 
         return dL_dW
+
+    def calculateBiasGradients(self, dL_dY):
+        return np.squeeze(dL_dY, axis=0)
 
     def calculateInputGradients(self, dL_dY):
         weights = np.swapaxes(self.weights, 2, 3)
@@ -109,10 +116,14 @@ class ConvLayer(Layer):
         dL_dW = np.mean(dL_dW, axis=0)
         self.weights -= learning_rate * dL_dW
 
+        dL_dB = self.calculateBiasGradients(dL_dY)
+        self.biases -= learning_rate * dL_dB
+
         dL_dX = self.calculateInputGradients(dL_dY)
         return dL_dX
 
 class FCLayer(Layer):
+    biases = None
     weights = None
     layer_input = None
 
@@ -120,6 +131,7 @@ class FCLayer(Layer):
         c, h, w = input_size
         limit = 1 / math.sqrt(60000)
         self.weights = np.random.uniform(low=-limit, high=limit, size=(c * h * w, num_nodes))
+        self.biases = np.zeros(self.weights.shape[1])
 
     # Tensor is size (n, c, h, w)
     def calculateOutput(self, tensor, training):
@@ -129,12 +141,17 @@ class FCLayer(Layer):
             self.layer_input = flattened
 
         product = np.dot(flattened, self.weights[:, :])
+        product += self.biases
         max_val = np.max(product, axis=1)
         exp = np.exp(product - max_val[:, np.newaxis])
-        return exp / np.sum(exp, axis=1)[:, np.newaxis]
+        normalized_exp = exp / np.sum(exp, axis=1)[:, np.newaxis]
+        return normalized_exp
 
     def calculateWeightGradients(self):
         return self.layer_input
+
+    def calculateBiasGradients(self, dL_dY):
+        return np.mean(dL_dY, axis=0)
 
     def updateWeights(self, dL_dY, learning_rate):
         dY_dX = self.weights
@@ -148,8 +165,10 @@ class FCLayer(Layer):
 
         self.weights -= learning_rate * dL_dW
 
-        return dL_dX
+        dL_dB = self.calculateBiasGradients(dL_dY)
+        self.biases -= learning_rate * dL_dB
 
+        return dL_dX
 
 class MnistCNN:
     layers = []
